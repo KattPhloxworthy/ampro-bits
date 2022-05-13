@@ -1,0 +1,1031 @@
+.z80
+
+; * * * * * * * * * * * * * * * * * * * * * * * * *
+; *        SYSTEM RE-GENERATION UTILITY           *
+; *            COPYRIGHT (C) 1984                 *
+; *           AMPRO COMPUTERS, INC.               *
+; * * * * * * * * * * * * * * * * * * * * * * * * *
+
+; assemble with m80.com or equivalent.
+
+VER	EQU	33
+
+;
+;---------------------------------------------------------------------
+;
+;	SYSTEM GENERATION UTILITY	SYSGEN.ASM
+;
+;	This utility copies the system images from the Source
+;	disk(ette) onto the Destination disk(ette).
+;
+;	The system images moved consist of CCP BDOS BIOS and ZCPR
+;	if currently active on the source drive.
+;
+;	For AMPRO diskettes, the disk layout is as follows:
+;
+;	Track 0 sector 0	Boot loader
+;
+;	Track 0 sector 1 thru 39   CCP BDOS
+;	Track 1 sector 0 thru 4    BDOS continued.
+;
+;	Track 1 sector 5 thru 39   BIOS
+;
+;	For the AMPRO hard disk systems, the disk layout is as follows:
+;
+;	Track 0 sector 0	Boot loader
+;
+;	Track 0 sector 1 thru 44   CCP BDOS
+;
+;	Track 0 sector 45 thru 63   BIOS
+;
+;	Track 1 sector 0 thru  11   BIOS	
+;
+;	All unused sectors on the hard disk tracks 0 and 1 are reserved.
+;
+;
+;	NOTE: This utility will support any source or destination
+;	      device, either floppy or hard disk (or partition).
+;
+;	      The single requirement is that the target device must
+;	      have 80 CP/M sectors available in the reserved area
+;	      beginning at CP/M Track 0 Sector 0. Track incrementing
+;	      is automatically done when required.
+;
+;	      This includes mixture of single and double-sided devices.
+;
+;-------------------------------------------------------------------------
+
+
+; Revision History:
+;
+;  Ver	Date	Who	Description
+;  ---	-----	---	----------------------------------------------
+;
+;  3.3	E6.17	RJB	Removed HD controller type from SCSI drive
+;			letter listing
+;
+;  3.2	E2.22	RJB	Added message to display the floppy and hard
+;			disk CP/M drive letters, switched input from
+;			BIOS calls to BDOS calls & allowed '.'=<ESC>,
+;			','=<RETURN> in prompt (to make SUBMIT-able).
+;
+;  3.1	E2.12	RJB	Added a "don't care" read to flush the last
+;			written sector to disk.
+;
+;  3.0  DC.10   RLD	Massive changes to allow disk A-P floppy or 
+;			hard disks.  Removed all primitive hardware-
+;			dependant code since already exists with the 
+;			system BIOS.  Almost a total re-write.
+;
+;  2.2	D5.08		Cleaned up responses.
+;  2.1  D5.03		Add 10 ms delay after line feeds.
+;  2.0			Release version.
+;
+
+; -------------------------------------------------------------------------
+;
+; May 12, 2022
+;
+; 
+; I made two changes to this file but I'm unsure whether to bump the
+; revision number or not.  Those two changes are:
+;
+; 1.  Translate all code from Intel to Zilog mnemonics.  There is no real
+;     point to keeping the code in the past anymore since all Z80 Little
+
+;     Boards use...  well...  the Z80.  Not to mention, just about all the
+;     major Z80 assemblers of the day from Microsoft, SLR and others are out
+;     there as freeware/abandonware.  For example, SLR's Z80ASM is freeware
+;     and M80/L80 is abandonware.(*) Another candidate for building code
+;     using Zilog mnemonics is Z80MR, but unlike Z80ASM and M80, it is not a
+;     relocating assembler.
+;
+;     Regardless, the point is clear.  With most 8-bit CP/M systems out
+;     there running the Z80, there really is no point to keeping them
+;     shackled to the past, using outdated and outmoded mnemonics.  Might as
+;     well modernize the code.  Better stuff than ASM.COM is out there.
+;
+; 2.  Add a prompt to allow the user to copy whatever's in memory into the
+;     system tracks even if the in-memory image detection did not see the
+;     "magic value".  If the user is installing something that can
+;     inject a replacement CCP+BDOS combo into a SYSGEN-read image in
+;     memory, e.g. MICROCode Consulting's QP/M distribution.  SYSGEN uses a
+;     "magic value" to determine whether an image is in memory.  In the case
+;     of QP/M, this value is absent, causing SYSGEN to complain to the user
+;     that there isn't an image present in memory when in fact there is.  To
+;     be safe, I also included a message so that the user must "USE WITH
+;     CAUTION" to make sure they know what they're getting themselves into.
+;
+; Other than formatting (which I will document soon), I left the coding style,
+; including case, as-is.  The original comment said that there was "no Z80
+; code", but there was one sole instruction expressed by a cople of DB pseudos.
+; Those could have been left in there, but I elected to remove the DB in favor
+; of using the actual instruction those DBs represented.  If I'm going to
+; modernize the code by going Zilog, by golly I'm doing it all!
+;
+; I also cleaned up items that would cause M80 to error out (no colons for DB/DW
+; lines, colons on EQU lines) or throw warnings (like a null string represented
+; by '' which would have still worked, but M80 looked at me askance when this
+; construct was there when I assembled as Z80; ASM liked it just fine, though).
+;
+; I would apprecaite any input on the matter as to versioning so I can release
+; a proper update
+;
+; I can be reached at kattphlox@gmail.com.
+;
+; Thanks!
+;
+; --Katt Phloxworthy, nerdy catgirl VTuber.  =^.^=
+;
+
+CTLC	EQU		3				; control c
+CR		EQU		13				; carriage return
+LF		EQU		10				; line feed
+ESC		EQU		27				; escape key
+UPCASE	EQU		5FH				; upper case mask
+
+BDOS	EQU		5				; bdos entry point
+FCB		EQU		5CH				; default file control block
+
+OPEN	EQU		15				; bdos open file
+READS	EQU		20				; bdos read sequential
+STDMA	EQU		26				; bdos set dma address
+IMAGE	EQU		900H			; 'sysgen' image location
+BUFFER	EQU		IMAGE
+TBUF	EQU		IMAGE+(80*128)	; default disk buffer and kbd buffer
+
+ONDSKS	EQU		5CH				;BIOS OFFET TO (NDSKS) PARAMETER
+OFCOPY	EQU		98H				;OFFSET TO COPYRIGHT STRING
+
+		ASEG
+		ORG		100H
+
+		JP		START
+
+
+CURCNT:	DB		0
+CURPNT:	DW		0
+OPER:	DB		0
+SECTOR:	DW		0
+TRACK:	DB		0
+MAXSEC:	DB		0
+
+SDRIV:	DB		0
+DDRIV:	DB		0
+DMAADR:	DW		0
+
+clchr:	db		0
+clptr:	dw		0
+
+DFDEV:
+		ld		a,(bvers)
+		cp		20
+		ret		m
+
+		LD		DE,D$FDEV$HDR	; Print header
+		ld		c,9
+		call	bdos
+
+		ld		a,0				; starting unit #
+D$NEXT$FDEV:
+		ld		(unit),a
+		call	bpaget			; Get address of unit id	
+		LD		A,(HL)			; Get unit id
+		CP		01				; Floppy?
+		JP		NZ,D$BUMP$PTR	; No -- go to the next device
+		inc	hl					; Get drive #
+		ld		a,(hl)			; .
+		and		03h				; mask out excess bits
+		ld		l,a				; update floppy device number
+		ld		h,0				; .
+		add		hl,hl			; x2
+		ex		de,hl
+		LD		HL,FNAMES		; .
+		add		hl,de			; x2
+		add		hl,de			; x4
+		add		hl,de			; x6
+		ld		de,d$fname		;
+		ld		bc,6			; 
+		ldir					; . (LDIR) (Was a pair of DBs which defined the
+								; sole Z80 instruction in what was supposed to
+								; be otherwise devoid of Z80 code.  --KP
+		ld		a,(unit)		;
+		add		a,'A'			;
+		ld		(d$current),a	;
+		LD		DE,D$FDEV$LIN	; and output the line
+		ld		c,9
+		call	bdos
+
+D$BUMP$PTR:
+		ld		a,(unit)
+		inc		a				; Bump to next unit
+		cp		16				; Done yet?
+		jp		m,D$NEXT$FDEV	; No -- go do the next one
+		RET
+
+unit:	db	0
+
+D$FDEV$HDR:		
+		DB	cr,lf,lf,'FLOPPY DISK ASSIGNMENTS:',CR,LF
+		DB	'CP/M drive   '
+		DB	'Floppy disk',CR,LF
+		DB	'------------------------',CR,LF,'$'
+
+D$FDEV$LIN:	DB	' '
+D$CURRENT:	DB	'x  '
+D$EDISK:	DB	'   '
+D$EBLANK:	DB	'         '
+D$FNAME:	DB	'        '
+			DB	CR,LF,'$'
+D$FDEV$HLEN	EQU	$-D$FDEV$LIN	; Line length
+
+FNAMES:	DB		'First '
+		DB		'Second'
+		DB		'Third '
+		DB		'Fourth'
+
+DSDEV:
+		ld		a,(bvers)
+		cp		20
+		ret		m
+
+		LD		DE,HD$HEADER	; Display table header
+		ld		c,9
+		CALL	bdos
+
+		ld		a,0
+D$NEXT$SDEV:
+		ld		(unit),a
+		call	bpaget
+		ld		a,(hl)
+		cp		03
+		jp		nz,d$next$unit
+		inc		hl
+		inc		hl
+		ld		a,(hl)		; logical unit number
+		and		0e0h		; .
+		RLCA				; .  (move bits 7-5 to 2-0) 
+		RLCA				; .
+		RLCA				; .
+		AND		07H			; .  (mask out other bits)
+		ADD		A,'0'		; .  (convert to ascii 0-7)
+		LD		(DRIVE$UNIT),A		; .
+
+		inc		hl
+		LD		A,(HL)
+		ld		b,0ffh
+		or		a
+		jp		z,sc$conv
+sc$nxt$bit:
+		inc		b
+		rrca
+		jp		nc,sc$nxt$bit
+sc$conv:
+		ld		a,b
+		ADD		A,'0'		; .  (convert to ascii 0-7)
+		LD		(DRIVE$ADDRESS),A	; .
+
+		ld		a,(unit)
+		add		A,'A'
+		ld		(drive$letters),a
+
+		ld		de,drive$info
+		ld		c,9
+		call	bdos
+
+D$NEXT$UNIT:
+		LD		A,(UNIT)	; Get unit we're working on
+		INC		A			; Bump to next
+		Cp		16			; Are we done?
+		JP		M,D$NEXT$SDEV	; No -- go do another
+		RET
+
+
+HD$HEADER:
+		DB	cr,lf,lf,'HARD DISK ASSIGNMENTS:',CR,LF
+		DB	'CP/M drive      '
+		DB	'Addr   Unit #',CR,LF
+		DB	'-------------------------------------'
+		DB	CR,LF,'$'
+
+DRIVE$INFO:		DB	'   '
+DRIVE$LETTERS:	DB	'               '
+DRIVE$ADDRESS:	DB	'0      '
+DRIVE$UNIT:		DB	'0',CR,LF,'$'
+
+
+;
+;   S T A R T . . .
+;
+
+
+START:	
+		ld		sp,stack	
+
+		ld		hl,80h
+		ld		a,(hl)
+		inc		hl
+		ld		c,a
+		or		a
+		jp		z,nocmdline
+delimiter:
+		ld		a,(hl)
+		inc		hl
+		dec		c
+		jp		z,nocmdline
+		cp		'/'
+		jp		nz,delimiter
+
+		ld		(clptr),hl
+
+nocmdline:
+		ld		a,c
+		ld		(clchr),a
+
+		CALL	CGET		;SET BIOS TABLES TO LOCAL JUMPS
+
+;----------------------------------------------------------------------
+;
+;	IF ZERO SET ON RETURN, MODIFY THE MAX SOURCE AND DESTINATION
+;	MESSAGES AND COMPARES TO USE BIOS VARIABLE (NDSKS)
+;
+;	This is done to prevent a system hang on pre-2.1 Bios where
+;	a non-existant floppy will hang.
+;
+;	In the 2.1 Bios, a select error is returned 
+;
+;----------------------------------------------------------------------
+
+		JP		NZ,STT1		;JUMP FOR VERSION 2.1 OR GREATER
+		LD		HL,(1)		;GET BIOS ADDRESS BACK 
+		LD		L,0			;POINT TO COLD ENTRY
+		LD		DE,ONDSKS	;OFFSET TO KNOW VARIABLES
+		ADD		HL,DE
+		LD		A,(HL)		;GET MAX DISK NUMBER
+		ADD		A,'@'		;SET ASCII BIAS
+		LD		(SMXD),A
+		LD		(DMXD),A
+		INC		A			;+1 FOR COMPARE
+		LD		(SDXS),A	;SET DISPLAY VALUES
+		LD		(DDXS),A
+
+STT1:
+		CALL	CLEAR		;CLEAN THE SCREEN
+		LD		DE,MSG1
+		CALL	CMESS		;AND DISPLAY WE ARE HERE
+
+;---------------------------------------------------------------------
+;
+;	TEST THE DEFAULT FCB FOR A FILENAME ENTRY
+;
+;	If the first character of the default FCB is not a Space,
+;	then use the filename provided within that FCB as the source
+;	file in place of a source diskette.
+;
+;	The entry format from CCP is: SYSGEN  d:Fname.Ext
+;
+;	If the first character of the 'filename' is an asterisk,
+;	then use the console buffer as input for the drive names.
+;
+;-------------------------------------------------------------------
+
+		LD		A,(FCB+1)	; first file name character
+		cp		'/'			; star means use console input
+		jp		z,asksrc	; 
+		CP		' '			; check for space
+		JP		NZ,GETFIL	; read the named file
+
+;-------------------------------------------------------------------
+;
+;	GET SOURCE DISK ENTRY
+;
+;	Get entry and then a Carriage Return key. When CR hit, go
+;	and read from the source drive.
+;
+;------------------------------------------------------------------
+ 
+ASKSRC:
+		call	dfdev
+		call	dsdev
+
+asks2:	LD		DE,MSGS
+		CALL	CMESS
+
+ASKS:	CALL	crdc
+		call	switch
+		AND		UPCASE
+		CP		ESC
+		JP		Z,DCLR		;CLEAR SCREEN AND RETURN
+		CP		CTLC
+		JP		Z,DCLR
+		CP		CR			;IF CR THEN MEMORY IMAGE
+		JP		Z,RMIMAG
+		CP		'A'
+		JP		C,ASKS2
+SDXS	EQU		$+1
+		CP		'P'+1		;A THRU P ALLOWED
+		JP		NC,ASKS2
+		LD		(SDRIV),A
+		LD		(SDR),A
+		LD		C,A
+		LD		DE,MSG2
+		CALL	CMESS
+
+SDRA:	CALL	CRDC
+		call	switch
+		CP		CR
+		JP		Z,RDSRC		;NOW READ IN THE SOURCE
+		CP		CTLC
+		JP		Z,DCLR
+		CP		ESC
+		JP		Z,DCLR
+		JP		SDRA
+
+
+;-------------------------------------------------------------------
+;
+;	GET DESTINATION DISK ENTRY
+;
+;	Get entry and then a Carriage Return key. When CR hit, go
+;	and write to the source drive.
+;
+;------------------------------------------------------------------
+
+ASKDES:
+		call	dfdev
+		call	dsdev
+
+askd2:	LD		DE,MSGD
+		CALL	CMESS
+
+ASKD:	CALL	crdc
+		call	switch
+		and		upcase
+		CP		ESC
+		JP		Z,DCLR
+		CP		CTLC
+		JP		Z,DCLR
+		CP		CR
+		JP		Z,DCLR
+		CP		'A'
+		JP		C,ASKD2
+DDXS	EQU		$+1
+		CP		'P'+1		;A THRU P ALLOWED
+		JP		NC,ASKD2
+		LD		(DDRIV),a
+		LD		(DDR),A
+		LD		C,A
+		LD		DE,MSG4
+		CALL	CMESS
+
+DDRA:	CALL	CRDC
+		call	switch
+		CP		CR
+		JP		Z,DDRB		; write destination disk
+		CP		CTLC
+		JP		Z,DCLR
+		CP		ESC
+		JP		Z,DCLR
+		JP		DDRA
+DDRB:
+		CALL	CWTC
+		JP		WRDES
+
+
+switch:	cp		','
+		jp		nz,notcr
+		ld		a,cr
+		ret
+notcr:	cp		'.'
+		jp		nz,notesc
+		ld		a,esc
+		ret
+notesc:	cp		'!'
+		ret		nz
+		ld		a,3
+		ret
+
+
+;---------------------------------------------------------------------
+;
+;	SOURCE ENTRY IS MEMORY
+;
+;	Test to see if a system really there.
+;
+;	This is done via a simple string compare starting at 
+;	Buffer + OFCOPY looking for the Copyright string.
+;
+;	If the system is in memory, then prompts for destination.
+;
+;	If no system currently in memory, prompts for new source.
+;
+;---------------------------------------------------------------------
+
+RMIMAG:
+		LD		HL,BUFFER+OFCOPY	;POINT TO WHERE STRING SHOULD BE
+		LD		DE,CMPSTG
+		LD		B,CMPEND-CMPSTG		;FOR LENGTH
+RMI0:
+		LD		A,(DE)
+		CP		(HL)
+		JP		NZ,RMI2		;NOT THERE
+		INC		HL
+		INC		DE
+		DEC		B
+		JP		NZ,RMI0
+;
+RMI1:
+		LD		DE,MEM1		;SHOW FROM MEMORY
+		CALL	CMESS
+		JP		ASKDES		;AND GET THE DESTINATION
+
+RMI2:
+		LD		DE,MEM2		;SHOW NO SYSTEM IN MEMORY
+		CALL	CMESS
+		CALL	CRDC
+		call	switch
+		AND		UPCASE
+		CP		'Y'
+		JP		Z,ASKDES		;CLEAR SCREEN AND RETURN
+		CP		CTLC
+		JP		Z,DCLR
+	
+		JP		ASKS2			;AND GET NEW SOURCE
+;
+CMPSTG:  DB	'COPYRIGHT (C)'
+CMPEND:	
+
+
+;-----------------------------------------------------------------
+;
+;	IF A SOURCE FILENAME WAS ENTERED, THEN READ THE FILE AS
+;	THE SOURCE DISK.
+;
+;-----------------------------------------------------------------
+
+GETFIL:	LD		DE,FCB+12	;CLEAR FCB EXTENT BEFORE OPEN
+		LD		B,23
+		XOR		A
+
+GF0:	LD		(DE),a
+		INC		DE
+		DEC		B
+		JP		NZ,GF0
+
+		LD		DE,FCB		;OPEN FILE
+		LD		C,OPEN
+		CALL	BDOS
+		INC		A
+		JP		Z,NOFIL		; file cannot be found
+
+		LD		DE,TBUF
+		LD		C,STDMA
+		CALL	BDOS
+
+		LD		B,16		; read 16 dummies
+GF1:	PUSH	BC			; save count
+		LD		DE,FCB
+		LD		C,READS
+		CALL	BDOS
+		POP		BC
+		DEC		B
+		JP		NZ,GF1
+
+		LD		HL,IMAGE
+		LD		(DMAADR),HL
+GF2:	EX		DE,HL
+		LD		C,STDMA
+		CALL	BDOS
+		LD		DE,FCB
+		LD		C,READS
+		CALL	BDOS
+		OR	A
+		JP		NZ,ASKDES	;FILE READ COMPLETED - GET DESTINATION
+
+		LD		HL,(DMAADR)
+		LD		DE,128
+		ADD		HL,DE
+		LD		(DMAADR),HL
+		JP		GF2	
+
+
+NOFIL:	LD		DE,NFLM
+		CALL	CMESS
+		JP		0
+NFLM:
+		DB		CR,LF,LF,'Cannot find source file!',CR,LF,'$'
+
+;-------------------------------------------------------------------
+;
+;	READ SYSTEM FROM SOURCE DISK
+;
+;	Reads in 80 CP/M sectors starting at Trk 0 Sector 0, to 
+;	to system ram at BUFFER.
+;
+;------------------------------------------------------------------
+;
+RDSRC:
+		LD		HL,0		;START AT TRK 0 SECTOR 0
+		LD		(SECTOR),HL
+		LD		A,01H		;SET A READ OPERATION IN PROGRESS
+		LD		(OPER),A
+		LD		A,(SDRIV)	;GET SOURCE DRIVE
+		CALL	SELECT
+		JP		NZ,ASKSRC	;ASK FOR A NEW SOURCE
+		LD		A,80		;SET 80 SECTORS TO READ FOR CCP BDOS BIOS
+		LD		(CURCNT),A	;SET COUNTER
+		CALL	MOVE		;AND DO IT...
+		JP		P,ASKDES	;NOW GET THE DESTINATION
+
+
+;-------------------------------------------------------------------
+;
+;	WRITE SYSTEM FROM RAM BUFFER
+;
+;	Writes 80 CP/M sectors to the target destination disk from
+;	the system ram BUFFER, starting at Track 0 Sector 0.
+;
+;---------------------------------------------------------------------
+ 
+;
+WRDES:
+		LD		HL,0		;START AT TRK 0 SECTOR 0
+		LD		(SECTOR),HL
+		LD		A,02H		;SET A WRITE OPERATION IN PROGRESS
+		LD		(OPER),A
+		LD		A,(DDRIV)	;GET DEST DRIVE
+		CALL	SELECT
+		JP		NZ,ASKDES	;ASK FOR A NEW DEST
+		LD		A,80		;SET 80 SECTORS TO WRITE FOR CCP BDOS
+		LD		(CURCNT),A	;SET COUNTER
+		CALL	MOVE		;AND DO IT...
+		call	flush		; now read t0,s0 to flush write
+		JP		P,ASKDES	;NOW GET THE NEXT DESTINATION
+;
+;---------------------------------------------------------------------
+;
+;	SELECT DISK
+;
+;	Selects the requested disk drive in (A) , and aquires the current
+;	Sectors-per-track entry from the DPB for this drive.
+;
+;	If a select error, returns with NZ set.
+;
+;--------------------------------------------------------------------
+
+SELECT:
+		DEC		A			;-1
+		AND		0FH			;ISOLATE LUN
+		LD		C,A
+		LD		E,0			;FORCE RE-TYPE ID THIS DRIVE
+		CALL	BSEL		;DO THE SELECT
+		LD		A,H
+		OR		L			;WATCH FOR SELECT ERROR
+		JP		Z,SELERR	;IF ERROR ON SOURCE SELECT
+		LD		DE,10		;OFFSET TO CURRENT DPB THIS DRIVE
+		ADD		HL,DE
+		LD		A,(HL)		;GET THE DPB ADDRESS FROM THE DPB
+		INC		HL
+		LD		H,(HL)
+		LD		L,A
+		LD		A,(HL)		;THIS GIVES US THE SECTORS PER TRACK
+		LD		(MAXSEC),A	;SAVE IT FOR LATER
+		LD		HL,BUFFER	;SET DMA TRANSFER ADDRESS
+		LD		(CURPNT),HL	;SET BUFFER TO START
+		EX		DE,HL
+		CALL	BSDMA
+		XOR		A			;LEAVE WITH Z SET
+		RET
+
+SELERR:
+		LD		DE,SELM		;ISSUE SELECT ERROR
+		CALL	CMESS
+		LD		A,0FFH
+		OR		A			;AND SET NZ
+		RET
+
+SELM:
+		DB		07H,CR,LF,LF,' DRIVE SELECT ERROR  ',CR,'$'
+
+;---------------------------------------------------------------------
+;
+;	MOVE SYSTEM
+;
+;	This is the work code to Read or Write the number of sectors
+;	starting at (SECTOR) for (CURCNT) with data buffer at
+;	(CURPNT), and the drive sectors-per-track at (MAXSEC).
+;
+;	Returns with Z set if done and no errors, else NZ set.
+;
+;---------------------------------------------------------------------
+
+MOVE:
+		LD		DE,CRSTG	;CR LF STRING
+		CALL	CMESS
+MOV0:
+		LD		A,'.'		;SHOW WE ARE BUSY
+		CALL	CWTC
+
+		LD		HL,(CURPNT)	;GET CURRENT BUFFER POINTER
+		EX		DE,HL
+		CALL	CDMA		;AND SET DMA ADDRESS
+		LD		HL,(SECTOR)	;GET TRK AND SECTOR
+		LD		A,(OPER)
+		CALL	CRDWR		;AND READ OR WRITE ONE SECTOR
+		JP		NZ,MOVERR	;DISK ERROR
+		LD		HL,(CURPNT)
+		LD		DE,128
+		ADD		HL,DE		;BUMP DMA ADDRESS
+		LD		(CURPNT),HL
+		LD		HL,(SECTOR)
+		INC		HL			;AND BUMP SECTOR +1
+		LD		(SECTOR),HL
+		LD		A,(MAXSEC)	;TEST AGAINST CURRENT MAX SECTOR
+		CP		L
+		JP		NZ,MOV1		;NOT THERE YET
+		LD		L,0			;RESET SECTOR TO 0
+		INC		H			;AND BUMP TRACK +1
+		LD		(SECTOR),HL
+MOV1:
+		LD		A,(CURCNT)	;SECTOR COUNTER -1
+		DEC		A
+		LD		(CURCNT),A
+		JP		NZ,MOV0		;DO NEXT
+		RET					;ALL DONE HERE
+;
+MOVERR:
+		LD		DE,MESER	;JUST ISSUE THE MESSAGE
+		CALL	CMESS
+		JP		P,0			;AND WARM BOOT
+;
+MESER:
+		DB		CR,LF,LF,'R/W ERROR - ABORTED - '
+		DB		CR,LF,'$'
+;
+
+flush:						; flush data with a "don't care" read
+		ld		hl,(curpnt)	; set dma
+		ex		de,hl		; .
+		call	cdma		; .
+		ld		hl,0		; read track 0, sector 0
+		ld		a,01h		; .
+		call	crdwr		; .
+		jp		nz,moverr	; display any error
+		ret					; and return
+
+
+;--------------------------------------------------------------------
+;
+;	READ OR WRITE SECTOR ENTRY
+;
+;	Enter with the operation in (A) READ = 01 WRITE = 02
+;	Track in (H)    Logical Sector in (L)
+;
+;	Data is stored at (DMA)
+;
+;	Exits with A and HL set as entered
+;
+;	Returns with NZ set id R/W error
+;
+;------------------------------------------------------------------
+
+COPR:	DB		0			;SAVED OPER BYTE
+CSEC:	DW		0			;TRK AND SECTOR SAVED
+;
+CRDWR:
+		LD		(COPR),A	;SAVE OPER CODE
+		LD		(SECTOR),HL	;AND TRK/SECTOR
+		LD		C,H
+		LD		B,0			;SET TRACK FIRST
+		CALL	BSTRK
+		LD		A,(SECTOR)	;GET SECTOR NEXT
+		LD		C,A
+		LD		B,0
+		CALL	BSSEC
+		LD		A,(COPR)	;GET OPERATION CODE
+		CP		01H			;READ?
+		JP		NZ,CWRTE
+		CALL	BSRD		;READ SECTOR
+		JP		CSEND
+CWRTE:
+		CALL	BSWRT		;ELSE WRITE ONE
+CSEND:
+		CP		0			;TEST STATUS
+		LD		A,(COPR)	;RESTORE A AND HL
+		LD		HL,(SECTOR)
+		RET					;RETURN WITH Z SET IF OK
+
+;-----------------------------------------------------------------------
+;
+;	CCGET		GET SYSTEM BIOS JUMP TABLES
+;
+;	Brings the current BIOS Jump tables starting at WARM BOOT
+;	to this local area for ease of utility access.
+;
+;	If this BIOS is Version 2.1 or greater, also brings in the
+;	secondary Jump Table.
+;
+;	Exits with Z set if lower than 2.1 Bios level
+; 
+;---------------------------------------------------------------------
+
+CGET:
+		LD		HL,(1)		;GET START OF BIOS CODE AREA
+		LD		DE,BBOOT	;MOVE TO LOCAL STORAGE
+		LD		B,BLEN		;SET COUNT
+		CALL	CGET0		;MOVE STRING
+		LD		A,0			;TEST FOR VERSION
+		CALL	BGETT		;IF 0, THEN LESS TAHN 1.4
+		LD		(BVERS),A	;SAVE BIOS VERS
+		INC		HL			;SEE IF HL IS FFFF
+		LD		A,H
+		OR		L
+		RET		Z			;IF SO, THEN OLD SYSTEM
+		DEC		HL			;FIX HL SINCE HAS THE TABLE ADDRESS
+		LD		DE,BNXTTBL	;SAVE NEXT TABLE
+		LD		B,BSLEN
+		CALL	CGET0
+		LD		A,0FFH		;SET NZ
+		OR		A
+		RET					;TO ID THIS LEVEL
+
+CGET0:
+		LD		A,(HL)
+		LD		(DE),A
+		INC		HL
+		INC		DE
+		DEC		B
+		JP		NZ,CGET0
+		RET
+;
+;-------------------------------------------------------------------
+;
+;	CMESS	SEND MESSAGE STRING
+;
+;	Outputs the string pointed to be (DE) until the ($) delimeter
+;
+;-------------------------------------------------------------------
+
+CMESS:
+		LD		C,9
+		JP		BDOS
+
+;---------------------------------------------------------------------
+;
+;	CDMA	Set (DE) to the DMA address 
+;
+;---------------------------------------------------------------------
+
+CDMA:
+		LD		C,26
+		JP		BDOS
+;
+;----------------------------------------------------------------------
+;
+;	CRDC	Read and Echo a Console Input
+;
+;---------------------------------------------------------------------
+;
+CRDC:
+		ld		a,(clchr)
+		or		a
+		jp		z,crdc2
+		dec		a
+		ld		(clchr),a
+		ld		HL,(clptr)
+		ld		a,(hl)
+		inc		hl
+		ld		(clptr),hl
+		push	af
+		call	cwtc
+		pop		af
+		ret
+crdc2:
+		LD		C,1
+		JP		BDOS
+;
+;--------------------------------------------------------------------
+;
+;	CWTC	Write character in (A) to the console
+;
+;--------------------------------------------------------------------
+
+CWTC:
+		LD		C,2
+		LD		E,A
+		JP		BDOS
+
+;-------------------------------------------------------------------
+;
+;	CLEAR THE SCREEN USING LINE-FEEDS ONLY
+;
+;------------------------------------------------------------------
+
+CLEAR:
+		LD		A,24		;SET TO CLEAR 24 LINES
+		LD		(CURCNT),A	;USE THE COUNTER
+CLR0:	
+		LD		A,LF		;ISSUE A LINE FEED
+		CALL	CWTC
+		LD		BC,1670		;SET ABOUT 10 MSEC DELAY
+CLR1:						;DO DELAY BETWEEN SO ALL CRTS CAN FOLLOW
+		DEC		BC
+		LD		A,C
+		OR		B	
+		JP		NZ,CLR1
+
+		LD		A,(CURCNT)
+		DEC		A
+		LD		(CURCNT),A
+		JP		NZ,CLR0
+		RET
+;
+;--------------------------------------------------------------------
+;
+;	EXIT PROGRAM
+;
+;	Clear screen and Warm Boot System. (same as JMP 0)
+;
+;------------------------------------------------------------------
+	
+DCLR:
+		JP		P,BBOOT		;TO WARM BOOT
+
+;
+;------------------------------------------------------------------
+;
+;	REPLICATED BIOS JUMP TABLE FOR EASE OF USAGE.
+;
+;------------------------------------------------------------------
+;
+BBOOT:	DS		3
+BCSTS:	DS		3
+BCIN:	DS		3
+BCOUT:	DS		3
+BLST:	DS		3
+BPNCH:	DS		3
+BRDR:	DS		3
+BHOME:	DS		3
+BSEL:	DS		3
+BSTRK:	DS		3
+BSSEC:	DS		3
+BSDMA:	DS		3
+BSRD:	DS		3
+BSWRT:	DS		3
+BLSTS:	DS		3
+BSTRN:	DS		3
+BGETT:	DS		3			;GET 2.1 JUMP TABLES
+BGETE:	DS		3
+BIOINT:	DS		3
+BSCSI:	DS		3
+
+BLEN	EQU		$-BBOOT		;LENGTH TO GET
+;
+BNXTTBL:					;VERSION 2.1 > SECONDARY TABLE
+BSWAP:	DS		3
+BSXBINT:	DS	3
+BPHTBAC:	DS	3
+BPAGET:	DS		3
+		DS		3
+		DS		3
+		DS		3
+		DS		3
+BSLEN	EQU		$-BNXTTBL
+
+
+BVERS:	DB		0			;VERSION OF BIOS CODE
+
+
+MSG1:
+		DB		CR,LF,'    AMPRO System Generation Utility'
+		DB		CR,LF,'Copyright (C) 1984,1985 AMPRO Computers, Inc.'
+		DB		CR,LF,'             Version '
+		DB		VER/10+'0','.',VER MOD 10+'0'
+		DB		CR,LF,'$'
+MSGS:
+		DB		CR,LF,'Enter Source Drive? (A thru '
+SMXD:	DB		'P) $'
+MSG2:
+		DB		CR,LF,'Place source on '
+
+SDR:	DB		'A, then type <RETURN>  $'
+
+MSGD:
+
+		DB		CR,LF,LF,'Enter Destination Drive? (A thru '
+DMXD:	DB		'P) $'
+MSG4:
+		DB		CR,LF,'Place destination disk on '
+DDR:	DB		'A, then type <RETURN>  $'
+
+CRSTG:	DB		CR,LF,'$'
+
+MEM2:	DB		cr,lf,lf,'NO SYSTEM APPEARS TO BE IN MEMORY.',cr,lf
+		DB		'Do you wish to try anyway? (PROCEED WITH CAUTION!) (y/n) >$'
+
+MEM1:	DB		cr,lf,lf,'Source = Memory Image.',lf,'$'
+
+		ds		32
+stack:
+
+		END
