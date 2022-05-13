@@ -93,12 +93,12 @@ VER	EQU	33
 ; 1.  Translate all code from Intel to Zilog mnemonics.  There is no real
 ;     point to keeping the code in the past anymore since all Z80 Little
 
-;     Boards use...  well...  the Z80.  Not to mention, just about all the
+;     Boards use... well... the Z80.  Not to mention, just about all the
 ;     major Z80 assemblers of the day from Microsoft, SLR and others are out
 ;     there as freeware/abandonware.  For example, SLR's Z80ASM is freeware
 ;     and M80/L80 is abandonware.(*) Another candidate for building code
-;     using Zilog mnemonics is Z80MR, but unlike Z80ASM and M80, it is not a
-;     relocating assembler.
+;     using Zilog mnemonics is Z80MR, but unlike Z80ASM and M80, it was
+;     freeware from the start as well as not a relocating assembler.
 ;
 ;     Regardless, the point is clear.  With most 8-bit CP/M systems out
 ;     there running the Z80, there really is no point to keeping them
@@ -107,28 +107,29 @@ VER	EQU	33
 ;
 ; 2.  Add a prompt to allow the user to copy whatever's in memory into the
 ;     system tracks even if the in-memory image detection did not see the
-;     "magic value".  If the user is installing something that can
-;     inject a replacement CCP+BDOS combo into a SYSGEN-read image in
-;     memory, e.g. MICROCode Consulting's QP/M distribution.  SYSGEN uses a
-;     "magic value" to determine whether an image is in memory.  In the case
-;     of QP/M, this value is absent, causing SYSGEN to complain to the user
-;     that there isn't an image present in memory when in fact there is.  To
-;     be safe, I also included a message so that the user must "USE WITH
-;     CAUTION" to make sure they know what they're getting themselves into.
+;     "magic value".  If the user is installing something that can inject a
+;     replacement CCP+BDOS combo into a SYSGEN-read image in memory, e.g.
+;     MICROCode Consulting's QP/M distribution.  SYSGEN uses a "magic value"
+;     to determine whether an image is in memory.  In the case of QP/M, this
+;     value is absent, causing SYSGEN to complain to the user that there
+;     isn't an image present in memory when in fact there is.  The original
+;     program then proceeds to ask again for a source.  I included a message
+;     with the prompt so that the user must "PROCEED WITH CAUTION" to make
+;     sure they know what they're getting themselves into.
 ;
 ; Other than formatting (which I will document soon), I left the coding style,
-; including case, as-is.  The original comment said that there was "no Z80
-; code", but there was one sole instruction expressed by a cople of DB pseudos.
-; Those could have been left in there, but I elected to remove the DB in favor
-; of using the actual instruction those DBs represented.  If I'm going to
-; modernize the code by going Zilog, by golly I'm doing it all!
+; including case, as-is.  The original version had a comment said that there
+; was "no Z80 code", but there was one sole instruction expressed by a couple
+; of DB pseudos.  Those could have been left in there, but I elected to
+; remove the DB in favor of using the actual instruction those DBs represented.
+; If I'm going to modernize the code by going Zilog, by golly, I'm doing it all!
 ;
 ; I also cleaned up items that would cause M80 to error out (no colons for DB/DW
 ; lines, colons on EQU lines) or throw warnings (like a null string represented
 ; by '' which would have still worked, but M80 looked at me askance when this
 ; construct was there when I assembled as Z80; ASM liked it just fine, though).
 ;
-; I would apprecaite any input on the matter as to versioning so I can release
+; I would appreciate any input on the matter as to versioning so I can release
 ; a proper update
 ;
 ; I can be reached at kattphlox@gmail.com.
